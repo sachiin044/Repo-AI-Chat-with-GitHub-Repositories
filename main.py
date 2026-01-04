@@ -1,0 +1,142 @@
+from fastapi import FastAPI
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import os
+
+from ingest import clone_repo, read_repo_files
+from embed import create_vector_store
+from rag import ask_question
+from router import route_question
+from followups import generate_followups
+
+load_dotenv()
+
+app = FastAPI(title="RepoLens Backend")
+
+VECTOR_STORE = None
+REPO_MANIFEST = None
+REPO_PATH = None
+
+
+# -------------------- MODELS --------------------
+
+class RepoRequest(BaseModel):
+    repo_url: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+# -------------------- HELPERS --------------------
+
+def find_file_entry(filename: str):
+    for f in REPO_MANIFEST["files"]:
+        if f["path"].endswith(filename):
+            return f
+    return None
+
+
+def format_code_snippet(code: str, language: str = "python"):
+    return f"```{language}\n{code}\n```"
+
+
+def format_directory_tree(structure: dict):
+    lines = []
+
+    for directory in sorted(structure.keys()):
+        # Hide git internals
+        if directory.startswith(".git"):
+            continue
+
+        indent_level = 0 if directory == "." else directory.count(os.sep)
+        indent = "│   " * indent_level
+
+        dir_name = "." if directory == "." else directory.split(os.sep)[-1]
+        lines.append(f"{indent}📁 {dir_name}/")
+
+        for file in sorted(structure[directory]):
+            lines.append(f"{indent}│   📄 {file}")
+
+    return "\n".join(lines)
+
+
+# -------------------- ROUTES --------------------
+
+@app.post("/upload-repo")
+def upload_repo(data: RepoRequest):
+    global VECTOR_STORE, REPO_MANIFEST, REPO_PATH
+
+    REPO_PATH = clone_repo(data.repo_url)
+    documents, REPO_MANIFEST = read_repo_files(REPO_PATH)
+    VECTOR_STORE = create_vector_store(documents)
+
+    return {"status": "Repository indexed successfully"}
+
+
+@app.post("/chat")
+def chat(data: ChatRequest):
+    if VECTOR_STORE is None:
+        return {
+            "answer": "No repository indexed yet.",
+            "follow_ups": []
+        }
+
+    question = data.question
+    q = question.lower()
+    route = route_question(q)
+
+    # ---------------- STRUCTURAL ----------------
+    if route == "STRUCTURAL":
+
+        # Directory structure
+        if "structure" in q or "list files" in q:
+            tree = format_directory_tree(REPO_MANIFEST["structure"])
+            answer = format_code_snippet(tree, "text")
+
+        # Total function count
+        elif "how many functions" in q:
+            count = sum(len(f["functions"]) for f in REPO_MANIFEST["files"])
+            answer = f"Total functions in the repository: {count}"
+
+        # Functions in a specific file
+        elif "functions in" in q and ".py" in q:
+            filename = next((w for w in q.split() if w.endswith(".py")), None)
+            file_entry = find_file_entry(filename)
+
+            if file_entry:
+                answer = (
+                    f"File: {filename}\n\n"
+                    f"Functions:\n- " + "\n- ".join(file_entry["functions"]) +
+                    ("\n\nClasses:\n- " + "\n- ".join(file_entry["classes"])
+                     if file_entry["classes"] else "\n\nClasses: None")
+                )
+            else:
+                answer = "File not found."
+
+        else:
+            answer = "Structural information is available, but the query format is unsupported."
+
+        follow_ups = generate_followups(question, answer)
+        return {"answer": answer, "follow_ups": follow_ups}
+
+    # ---------------- CONTENT ----------------
+    if route == "CONTENT":
+        filename = next((w for w in q.split() if w.endswith(".py")), None)
+
+        if filename:
+            path = os.path.join(REPO_PATH, filename)
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    raw_code = f.read()
+                answer = format_code_snippet(raw_code, "python")
+            else:
+                answer = "Requested file not found."
+        else:
+            answer = "No file specified."
+
+        follow_ups = generate_followups(question, answer)
+        return {"answer": answer, "follow_ups": follow_ups}
+
+    # ---------------- SEMANTIC (RAG) ----------------
+    return ask_question(VECTOR_STORE, question)
