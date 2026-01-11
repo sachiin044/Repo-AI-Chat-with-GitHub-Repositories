@@ -26,6 +26,7 @@ class RepoRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str
+    session_id: str
 
 
 # -------------------- HELPERS --------------------
@@ -45,7 +46,6 @@ def format_directory_tree(structure: dict):
     lines = []
 
     for directory in sorted(structure.keys()):
-        # Hide git internals
         if directory.startswith(".git"):
             continue
 
@@ -83,23 +83,21 @@ def chat(data: ChatRequest):
         }
 
     question = data.question
+    session_id = data.session_id
     q = question.lower()
     route = route_question(q)
 
     # ---------------- STRUCTURAL ----------------
     if route == "STRUCTURAL":
 
-        # Directory structure
         if "structure" in q or "list files" in q:
             tree = format_directory_tree(REPO_MANIFEST["structure"])
             answer = format_code_snippet(tree, "text")
 
-        # Total function count
         elif "how many functions" in q:
             count = sum(len(f["functions"]) for f in REPO_MANIFEST["files"])
             answer = f"Total functions in the repository: {count}"
 
-        # Functions in a specific file
         elif "functions in" in q and ".py" in q:
             filename = next((w for w in q.split() if w.endswith(".py")), None)
             file_entry = find_file_entry(filename)
@@ -108,8 +106,11 @@ def chat(data: ChatRequest):
                 answer = (
                     f"File: {filename}\n\n"
                     f"Functions:\n- " + "\n- ".join(file_entry["functions"]) +
-                    ("\n\nClasses:\n- " + "\n- ".join(file_entry["classes"])
-                     if file_entry["classes"] else "\n\nClasses: None")
+                    (
+                        "\n\nClasses:\n- " + "\n- ".join(file_entry["classes"])
+                        if file_entry["classes"]
+                        else "\n\nClasses: None"
+                    )
                 )
             else:
                 answer = "File not found."
@@ -138,5 +139,9 @@ def chat(data: ChatRequest):
         follow_ups = generate_followups(question, answer)
         return {"answer": answer, "follow_ups": follow_ups}
 
-    # ---------------- SEMANTIC (RAG) ----------------
-    return ask_question(VECTOR_STORE, question)
+    # ---------------- SEMANTIC (RAG + MEMORY) ----------------
+    return ask_question(
+        VECTOR_STORE,
+        question=question,
+        session_id=session_id
+    )

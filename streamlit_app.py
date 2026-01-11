@@ -1,26 +1,33 @@
-# streamlit_app.py
 import streamlit as st
 import requests
+import uuid
 
 # ------------------ CONFIG ------------------
 BACKEND_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(
-    page_title="Repo AI",
+    page_title="RepoLens",
     layout="wide"
 )
 
-st.title("🤖 Repo AI — Chat with GitHub Repositories")
+st.title("🤖 RepoLens — Chat with GitHub Repositories")
 
 # ------------------ SESSION STATE ------------------
+
+# Unique session id for memory (Lesson 8 requirement)
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+
+# Chat history for UI only (LLM memory is server-side)
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# Repo indexing flag
 if "repo_indexed" not in st.session_state:
     st.session_state.repo_indexed = False
 
-# ------------------ SAFE BACKEND CALL ------------------
-def call_backend(endpoint, payload):
+# ------------------ BACKEND CALL HELPER ------------------
+def call_backend(endpoint: str, payload: dict):
     try:
         response = requests.post(
             f"{BACKEND_URL}{endpoint}",
@@ -32,21 +39,18 @@ def call_backend(endpoint, payload):
             st.error(f"Backend error: {response.status_code}")
             return None
 
-        data = response.json()
-        if not isinstance(data, dict):
-            return None
-
-        return data
+        return response.json()
 
     except requests.exceptions.ConnectionError:
-        st.error("❌ Backend is not running. Please start FastAPI on port 8000.")
+        st.error("❌ Backend is not running. Start FastAPI on port 8000.")
         st.stop()
 
     except Exception as e:
         st.error(f"Unexpected error: {e}")
         return None
 
-# ------------------ REPO INDEXING ------------------
+
+# ------------------ INDEX REPOSITORY ------------------
 st.header("1️⃣ Index a GitHub Repository")
 
 repo_url = st.text_input(
@@ -75,7 +79,7 @@ st.header("2️⃣ Ask a Question")
 
 question = st.text_input(
     "Your question",
-    placeholder="What is good in this repository?"
+    placeholder="What does ingest.py do?"
 )
 
 if st.button("Ask"):
@@ -85,19 +89,20 @@ if st.button("Ask"):
         with st.spinner("Thinking..."):
             result = call_backend(
                 "/chat",
-                {"question": question}
+                {
+                    "question": question,
+                    "session_id": st.session_state.session_id
+                }
             )
 
-        if not result:
-            st.error("Invalid response from backend.")
-        elif "answer" not in result:
-            st.error(result.get("error", "No answer returned."))
-        else:
+        if result and "answer" in result:
             st.session_state.chat_history.append({
                 "question": question,
                 "answer": result["answer"],
                 "follow_ups": result.get("follow_ups", [])
             })
+        else:
+            st.error("Invalid response from backend.")
 
 st.divider()
 
@@ -108,10 +113,10 @@ for idx, chat in enumerate(reversed(st.session_state.chat_history)):
     st.markdown("### 🧑 You")
     st.markdown(chat["question"])
 
-    st.markdown("### 🤖 Repo AI")
+    st.markdown("### 🤖 RepoLens")
     st.markdown(chat["answer"])
 
-    follow_ups = chat.get("follow_ups") or []
+    follow_ups = chat.get("follow_ups", [])
 
     if follow_ups:
         st.markdown("**🔁 Follow-up questions:**")
@@ -120,20 +125,20 @@ for idx, chat in enumerate(reversed(st.session_state.chat_history)):
                 with st.spinner("Thinking..."):
                     result = call_backend(
                         "/chat",
-                        {"question": fq}
+                        {
+                            "question": fq,
+                            "session_id": st.session_state.session_id
+                        }
                     )
 
-                if not result or "answer" not in result:
+                if result and "answer" in result:
+                    st.session_state.chat_history.append({
+                        "question": fq,
+                        "answer": result["answer"],
+                        "follow_ups": result.get("follow_ups", [])
+                    })
+                    st.rerun()
+                else:
                     st.error("Failed to fetch follow-up response.")
-                    st.stop()
-
-                st.session_state.chat_history.append({
-                    "question": fq,
-                    "answer": result["answer"],
-                    "follow_ups": result.get("follow_ups", [])
-                })
-
-                # Proper rerun (stable API)
-                st.rerun()
 
     st.markdown("---")
