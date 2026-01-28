@@ -1,16 +1,31 @@
+# ------------------ Backend ------------------
 fastapi
 uvicorn
+pydantic
+python-dotenv
+requests
+
+# ------------------ LLM / LangChain ------------------
 langchain
 langchain-core
 langchain-community
 langchain-openai
-faiss-cpu
-gitpython
 openai
-python-dotenv
-tree-sitter
+
+# ------------------ Vector Store / Embeddings ------------------
+faiss-cpu
 sentence-transformers
 torch
+
+# ------------------ Git / Repo Handling ------------------
+gitpython
+tree-sitter
+
+# ------------------ Frontend ------------------
 streamlit
-requests
-pydantic
+
+# ------------------ Database ------------------
+supabase
+
+# ------------------ Fernet Key ------------------
+CREDENTIAL_ENCRYPTION_KEY=IVd2b5qHrgBsVOYkr1OkRs8HLnREoSIe1M5IGgbAS8Y=

@@ -1,3 +1,5 @@
+# streamlit_app.py
+
 import streamlit as st
 import requests
 import uuid
@@ -12,31 +14,59 @@ st.set_page_config(
 
 st.title("🤖 RepoLens — Chat with GitHub Repositories")
 
+# ------------------ API KEY ------------------
+
+st.sidebar.header("🔐 API Configuration")
+
+api_key = st.sidebar.text_input(
+    "API Key",
+    type="password",
+    placeholder="rl_live_xxxxxxxxxxxxxxxxx"
+)
+
+if not api_key:
+    st.sidebar.warning("API key is required to use RepoLens")
+
 # ------------------ SESSION STATE ------------------
 
-# Unique session id for memory (Lesson 8 requirement)
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
-# Chat history for UI only (LLM memory is server-side)
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Repo indexing flag
 if "repo_indexed" not in st.session_state:
     st.session_state.repo_indexed = False
 
 # ------------------ BACKEND CALL HELPER ------------------
+
 def call_backend(endpoint: str, payload: dict):
+    if not api_key:
+        st.error("❌ Please enter your API key.")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+
     try:
         response = requests.post(
             f"{BACKEND_URL}{endpoint}",
             json=payload,
+            headers=headers,
             timeout=300
         )
 
+        if response.status_code == 401:
+            st.error("❌ Missing or invalid API key.")
+            return None
+
+        if response.status_code == 403:
+            st.error("❌ API key revoked or unauthorized.")
+            return None
+
         if response.status_code != 200:
-            st.error(f"Backend error: {response.status_code}")
+            st.error(f"❌ Backend error ({response.status_code})")
             return None
 
         return response.json()
@@ -49,8 +79,8 @@ def call_backend(endpoint: str, payload: dict):
         st.error(f"Unexpected error: {e}")
         return None
 
-
 # ------------------ INDEX REPOSITORY ------------------
+
 st.header("1️⃣ Index a GitHub Repository")
 
 repo_url = st.text_input(
@@ -59,8 +89,10 @@ repo_url = st.text_input(
 )
 
 if st.button("Index Repository"):
-    if repo_url.strip() == "":
-        st.warning("Please enter a GitHub repository URL.")
+    if not api_key:
+        st.warning("Please enter your API key first.")
+    elif not repo_url.strip():
+        st.warning("Please enter a valid GitHub repository URL.")
     else:
         with st.spinner("Cloning and indexing repository..."):
             result = call_backend(
@@ -75,6 +107,7 @@ if st.button("Index Repository"):
 st.divider()
 
 # ------------------ ASK QUESTION ------------------
+
 st.header("2️⃣ Ask a Question")
 
 question = st.text_input(
@@ -83,7 +116,9 @@ question = st.text_input(
 )
 
 if st.button("Ask"):
-    if not st.session_state.repo_indexed:
+    if not api_key:
+        st.warning("Please enter your API key.")
+    elif not st.session_state.repo_indexed:
         st.warning("Please index a repository first.")
     elif question.strip():
         with st.spinner("Thinking..."):
@@ -107,6 +142,7 @@ if st.button("Ask"):
 st.divider()
 
 # ------------------ CHAT HISTORY ------------------
+
 st.header("💬 Conversation")
 
 for idx, chat in enumerate(reversed(st.session_state.chat_history)):

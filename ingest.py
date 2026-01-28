@@ -37,3 +37,29 @@ def read_repo_files(repo_path: str):
 
     manifest = build_repo_manifest(repo_path)
     return documents, manifest
+
+def clone_private_repo(repo_url: str, github_token: str, target_dir="repos"):
+    """
+    Clone a private GitHub repo using a per-request token.
+    Token is NOT stored.
+    """
+    os.makedirs(target_dir, exist_ok=True)
+
+    repo_name = repo_url.split("/")[-1].replace(".git", "")
+    repo_path = os.path.join(target_dir, repo_name)
+
+    # Inject token into clone URL
+    auth_url = repo_url.replace(
+        "https://",
+        f"https://{github_token}@"
+    )
+
+    # Always replace repo (as per your requirement)
+    if os.path.exists(repo_path):
+        import shutil
+        shutil.rmtree(repo_path)
+
+    git.Repo.clone_from(auth_url, repo_path)
+
+    return repo_path
+
